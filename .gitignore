@@ -1,0 +1,9 @@
+/.idea/
+/bin/
+
+*.log
+*.json
+
+.DS_Store
+Thumbs.db
+!/vendor/**/*.json
