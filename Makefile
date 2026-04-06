@@ -20,4 +20,4 @@ test_mylib:
 
 .PHONY: lint
 lint:
-	cd scripts && bash ./lint_docker.sh
+	go vet ./...
