@@ -14,9 +14,9 @@ build:
 run_server: build
 	./bin/$(PROJECT_NAME)
 
-.PHONY: transport_tests
-transport_tests:
-	go test -v ./tests/transport
+.PHONY: test_mylib
+test_mylib:
+	go test -v ./pkg/mylib
 
 .PHONY: lint
 lint:
