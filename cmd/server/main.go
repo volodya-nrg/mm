@@ -52,11 +52,14 @@ func run(runCtx context.Context, configFilepath string) error {
 		}
 	}()
 
-	myLib := mylib.NewMyLib(
+	myLib, err := mylib.NewMyLib(
 		cfg.SearchFolder,
 		cfg.DegreeOfParallelism,
 		mylib.NewNodeGetMD5(),
 	)
+	if err != nil {
+		return fmt.Errorf("failed to init mylib: %w", err)
+	}
 
 	for resp := range myLib.Run(ctx) {
 		slog.InfoContext(

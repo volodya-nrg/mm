@@ -3,91 +3,61 @@ package mylib
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
-	"time"
 )
 
 type MyLib struct {
-	searchDir       string
-	amountParallels int
-	noder           Noder
-	chResponses     chan Response
-	// эти ниже два св-ва все таки для того чтоб в итоге можно было выйти из программы
-	queueFiles []string
-	mtx        sync.Mutex
+	noder       Noder
+	chunkes     [][]string
+	chFiles     chan []string
+	chResponses chan Response
 }
 
 func (s *MyLib) Run(ctx context.Context) <-chan Response {
-	go s.walkToFolders(s.searchDir)   // если файлов много, то на фоне будет копится очередь из файлов
-	time.Sleep(10 * time.Millisecond) // все таки явно подождем, на всякий случай
-
 	go func() {
+		defer close(s.chFiles)
+		mtx := sync.Mutex{}
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
-				s.workerPool()
+				if len(s.chunkes) == 0 { // если закончились данные, то выйдем
+					return
+				}
+				sl := s.chunkes[0]
+
+				mtx.Lock()
+				s.chunkes = s.chunkes[1:]
+				mtx.Unlock()
+
+				s.chFiles <- sl
 			}
 		}
 	}()
-
+	go func() {
+		defer close(s.chResponses)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case sl, isOpened := <-s.chFiles:
+				if !isOpened {
+					return
+				}
+				s.handler(sl)
+			}
+		}
+	}()
 	return s.chResponses
 }
 
-// walkToFolders пробегается по файловой системе и кладет в очередь пути к файлам
-func (s *MyLib) walkToFolders(dirPath string) {
-	entries, err := os.ReadDir(dirPath)
-	if err != nil {
-		s.chResponses <- Response{
-			Err: fmt.Errorf("failed to read dir (%s): %w", dirPath, err),
-		}
-		return
-	}
-
-	var result []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			dirName := entry.Name()
-			if dirName == "." || dirName == ".." { // на всякий случай
-				continue
-			}
-
-			s.walkToFolders(filepath.Join(dirPath, dirName))
-		} else {
-			result = append(result, filepath.Join(dirPath, entry.Name()))
-		}
-	}
-
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	s.queueFiles = append(s.queueFiles, result...)
-}
-
-// workerPool берет часть сначала и обрабатывает такое кол-во сколько нод имеется
-func (s *MyLib) workerPool() {
-	if len(s.queueFiles) == 0 { // предохранитель на всякий случай, защита от двойного close ch
-		return
-	}
-
-	defer func() {
-		if len(s.queueFiles) == 0 {
-			close(s.chResponses) // закрываем канал чтоб в итоге программа завершилась
-		}
-	}()
-
-	amountElementsExecuted := 0
+func (s *MyLib) handler(files []string) {
 	wg := sync.WaitGroup{}
-
-	for k, incomingFile := range s.queueFiles {
-		if k > s.amountParallels { // обрабатываем только до определенного лимита
-			break
-		}
-
+	for _, filePath := range files {
 		wg.Add(1)
 		go func() { // каждый pipeline в своем потоке, но в pipeline соблюдается очередь
 			defer wg.Done()
@@ -98,7 +68,7 @@ func (s *MyLib) workerPool() {
 					Name: node.GetName(),
 				}
 
-				tmpResult, err := node.Execute(incomingFile)
+				tmpResult, err := node.Execute(filePath)
 				if err != nil {
 					resp.Err = fmt.Errorf("failed to execute node: %w", err)
 				} else {
@@ -108,24 +78,43 @@ func (s *MyLib) workerPool() {
 				s.chResponses <- resp
 				node = node.GetNextNode()
 			}
+
+			// time.Sleep(1 * time.Second)
 		}()
-		amountElementsExecuted++
 	}
 	wg.Wait()
-	slog.Debug("-----new batch-----")
-
-	// уберем те данные которые уже обработали
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	s.queueFiles = s.queueFiles[amountElementsExecuted:]
 }
 
-func NewMyLib(searchDir string, amountParallels int, noder Noder) *MyLib {
-	return &MyLib{
-		searchDir:       searchDir,
-		amountParallels: amountParallels,
-		noder:           noder,
-		chResponses:     make(chan Response, amountParallels), // пусть буфер будет
+func NewMyLib(searchDir string, amountParallels int, noder Noder) (*MyLib, error) {
+	/*
+		Протестировал получение мелких файлов с директорий на 1Gb.
+		В среднем выполняется за 800ms, т.е. ни чего страшного.
+		Поэтому сразу получим все расположения файлов.
+		Использую готовую уже для этого ф-ию, т.к. она короче в написании.
+	*/
+	var files []string
+	err := filepath.WalkDir(searchDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("failed to walk dir %s: %v", path, err)
+		}
+		if !d.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
+
+	chunkes := make([][]string, 0, len(files)/amountParallels)
+	for chunk := range slices.Chunk(files, amountParallels) {
+		chunkes = append(chunkes, chunk)
+	}
+
+	return &MyLib{
+		noder:       noder,
+		chunkes:     chunkes,
+		chFiles:     make(chan []string),
+		chResponses: make(chan Response),
+	}, nil
 }
