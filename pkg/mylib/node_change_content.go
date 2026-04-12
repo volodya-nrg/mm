@@ -6,33 +6,38 @@ import (
 	"time"
 )
 
-type NodeChangeContent struct {
-	next Noder
+type NodeChangeContent[T string] struct {
+	next Noder[T]
 	name string
 }
 
-func (n *NodeChangeContent) GetName() string {
+func (n *NodeChangeContent[T]) GetName() string {
 	return n.name
 }
 
-func (n *NodeChangeContent) GetNextNode() Noder {
+func (n *NodeChangeContent[T]) GetNextNode() Noder[T] {
 	return n.next
 }
-func (n *NodeChangeContent) SetNextNode(noder Noder) {
+func (n *NodeChangeContent[T]) SetNextNode(noder Noder[T]) {
 	n.next = noder
 }
-func (n *NodeChangeContent) Execute(filepath string) (string, error) {
+func (n *NodeChangeContent[T]) Execute(ch chan T) (chan T, error) {
+	filePath := <-ch
 	newContent := time.Now().Format(time.RFC3339Nano)
 
-	if err := os.WriteFile(filepath, []byte(newContent), 0644); err != nil {
-		return "", fmt.Errorf("failed to write data in file (%s): %w", filepath, err)
+	if err := os.WriteFile(string(filePath), []byte(newContent), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write data in file (%s): %w", filePath, err)
 	}
 
-	return newContent, nil
+	chOut := make(chan T, 1)
+	chOut <- T(newContent)
+	close(chOut)
+
+	return chOut, nil
 }
 
-func NewNodeChangeContent() *NodeChangeContent {
-	return &NodeChangeContent{
+func NewNodeChangeContent[T string]() *NodeChangeContent[T] {
+	return &NodeChangeContent[T]{
 		name: "change_content",
 	}
 }

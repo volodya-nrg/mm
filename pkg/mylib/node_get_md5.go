@@ -8,27 +8,29 @@ import (
 	"os"
 )
 
-type NodeGetMD5 struct {
-	next Noder
+type NodeGetMD5[T string] struct {
+	next Noder[T]
 	name string
 }
 
-func (n *NodeGetMD5) GetName() string {
+func (n *NodeGetMD5[T]) GetName() string {
 	return n.name
 }
 
-func (n *NodeGetMD5) GetNextNode() Noder {
+func (n *NodeGetMD5[T]) GetNextNode() Noder[T] {
 	return n.next
 }
 
-func (n *NodeGetMD5) SetNextNode(noder Noder) {
+func (n *NodeGetMD5[T]) SetNextNode(noder Noder[T]) {
 	n.next = noder
 }
 
-func (n *NodeGetMD5) Execute(filePath string) (string, error) {
-	file, err := os.Open(filePath)
+func (n *NodeGetMD5[T]) Execute(ch chan T) (chan T, error) {
+	filePath := <-ch
+
+	file, err := os.Open(string(filePath))
 	if err != nil {
-		return "", fmt.Errorf("failed to open file (%s): %w", filePath, err)
+		return nil, fmt.Errorf("failed to open file (%s): %w", filePath, err)
 	}
 	defer func() {
 		_ = file.Close()
@@ -37,15 +39,20 @@ func (n *NodeGetMD5) Execute(filePath string) (string, error) {
 	hash := md5.New()
 
 	if _, err = io.Copy(hash, file); err != nil {
-		return "", fmt.Errorf("failed to calc MD5-hash: %w", err)
+		return nil, fmt.Errorf("failed to calc MD5-hash: %w", err)
 	}
 
 	checksum := hex.EncodeToString(hash.Sum(nil))
-	return checksum, nil
+
+	chOut := make(chan T, 1)
+	chOut <- T(checksum)
+	close(chOut)
+
+	return chOut, nil
 }
 
-func NewNodeGetMD5() *NodeGetMD5 {
-	return &NodeGetMD5{
+func NewNodeGetMD5[T string]() *NodeGetMD5[T] {
+	return &NodeGetMD5[T]{
 		name: "md5",
 	}
 }

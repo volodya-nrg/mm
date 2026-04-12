@@ -9,14 +9,14 @@ import (
 	"sync"
 )
 
-type MyLib struct {
-	noder       Noder
+type MyLib[T string] struct {
+	noder       Noder[T]
 	chunkes     [][]string
 	chFiles     chan []string
 	chResponses chan Response
 }
 
-func (s *MyLib) Run(ctx context.Context) <-chan Response {
+func (s *MyLib[T]) Run(ctx context.Context) <-chan Response {
 	go func() {
 		defer close(s.chFiles)
 		mtx := sync.Mutex{}
@@ -55,7 +55,7 @@ func (s *MyLib) Run(ctx context.Context) <-chan Response {
 	return s.chResponses
 }
 
-func (s *MyLib) handler(files []string) {
+func (s *MyLib[T]) handler(files []string) {
 	wg := sync.WaitGroup{}
 	for _, filePath := range files {
 		wg.Add(1)
@@ -68,11 +68,15 @@ func (s *MyLib) handler(files []string) {
 					Name: node.GetName(),
 				}
 
-				tmpResult, err := node.Execute(filePath)
+				ch := make(chan T, 1)
+				ch <- T(filePath)
+				close(ch)
+
+				chResult, err := node.Execute(ch)
 				if err != nil {
 					resp.Err = fmt.Errorf("failed to execute node: %w", err)
 				} else {
-					resp.Result = tmpResult
+					resp.Result = string(<-chResult)
 				}
 
 				s.chResponses <- resp
@@ -85,7 +89,7 @@ func (s *MyLib) handler(files []string) {
 	wg.Wait()
 }
 
-func NewMyLib(searchDir string, amountParallels int, noder Noder) (*MyLib, error) {
+func NewMyLib[T string](searchDir string, amountParallels int, noder Noder[T]) (*MyLib[T], error) {
 	/*
 		Протестировал получение мелких файлов с директорий на 1Gb.
 		В среднем выполняется за 800ms, т.е. ни чего страшного.
@@ -111,7 +115,7 @@ func NewMyLib(searchDir string, amountParallels int, noder Noder) (*MyLib, error
 		chunkes = append(chunkes, chunk)
 	}
 
-	return &MyLib{
+	return &MyLib[T]{
 		noder:       noder,
 		chunkes:     chunkes,
 		chFiles:     make(chan []string),

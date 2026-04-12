@@ -1,8 +1,8 @@
 package mylib
 
-type Noder interface {
+type Noder[T string] interface {
 	GetName() string
-	GetNextNode() Noder
-	SetNextNode(n Noder)
-	Execute(filePath string) (string, error)
+	GetNextNode() Noder[T]
+	SetNextNode(n Noder[T])
+	Execute(chan T) (chan T, error)
 }
